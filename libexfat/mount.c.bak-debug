@@ -28,6 +28,8 @@
 #include <unistd.h>
 #include <sys/types.h>
 
+#define P_DEBUG
+
 static uint64_t rootdir_size(const struct exfat* ef)
 {
 	uint32_t clusters = 0;
@@ -170,6 +172,9 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 	int rc;
 	enum exfat_mode mode;
 
+	char *buf =NULL;
+	unsigned long i;
+	
 	exfat_tzset();
 	memset(ef, 0, sizeof(struct exfat));
 
@@ -182,6 +187,9 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 	else
 		mode = EXFAT_MODE_RW;
 	ef->dev = exfat_open(spec, mode);
+#ifdef P_DEBUG
+	printf("ef->dev->size(volume_size) = %d bytes \n",exfat_get_size(ef->dev));
+#endif
 	if (ef->dev == NULL)
 		return -EIO;
 	if (exfat_get_mode(ef->dev) == EXFAT_MODE_RO)
@@ -208,6 +216,17 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 		exfat_error("failed to read boot sector");
 		return -EIO;
 	}
+#ifdef P_DEBUG
+	/* debug */
+	buf = (char *)(ef->sb);
+	printf("\n\nef->sb:\n");
+	for(i=0;i<sizeof(struct exfat_super_block);i++)
+	{
+		printf("0x%02x%s%s%s", *(buf+i), (((i+1)%4) == 0)? " ":"", (((i+1)%8) == 0)? " ":"", (((i+1)%16) == 0)? "\n":" ");
+	}
+	printf("\n\n");
+#endif
+
 	if (memcmp(ef->sb->oem_name, "EXFAT   ", 8) != 0)
 	{
 		exfat_close(ef->dev);
@@ -240,6 +259,30 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 		exfat_error("failed to allocate zero sector");
 		return -ENOMEM;
 	}
+
+#ifndef P_DEBUG
+	/* debug */
+	if (exfat_pread(ef->dev, ef->zero_cluster, CLUSTER_SIZE(*ef->sb), 0) < 0)
+	{
+		exfat_close(ef->dev);
+		free(ef->sb);
+		free(ef->zero_cluster);
+		exfat_error("failed to read zero_cluster");
+		return -EIO;
+	}
+	buf = (char *)(ef->zero_cluster);
+	printf("\n\nef->zero_cluster:  CLUSTER_SIZE=%d\n",CLUSTER_SIZE(*ef->sb));
+	for(i=0;i<CLUSTER_SIZE(*ef->sb);i++)
+	{
+		if((i%512) == 0)
+		{
+			printf("\nsector[%d]: offset = %d\n",(i/512),i);
+		}
+		printf("0x%02x%s%s%s", *(buf+i), (((i+1)%4) == 0)? " ":"", (((i+1)%8) == 0)? " ":"", (((i+1)%16) == 0)? "\n":" ");
+	}
+	printf("\n\n");
+#endif
+	
 	/* use zero_cluster as a temporary buffer for VBR checksum verification */
 	if (!verify_vbr_checksum(ef->dev, ef->zero_cluster, SECTOR_SIZE(*ef->sb)))
 	{
@@ -276,6 +319,9 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 				le64_to_cpu(ef->sb->sector_count) * SECTOR_SIZE(*ef->sb),
 				exfat_get_size(ef->dev));
 	}
+#ifdef P_DEBUG
+	printf("ef->dev->size = %d bytes \n",exfat_get_size(ef->dev));
+#endif
 
 	ef->root = malloc(sizeof(struct exfat_node));
 	if (ef->root == NULL)
