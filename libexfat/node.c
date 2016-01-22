@@ -21,9 +21,13 @@
 */
 
 #include "exfat.h"
+#include "common.h"
 #include <errno.h>
 #include <string.h>
 #include <inttypes.h>
+
+unsigned int alloc_size = 0;
+void *tmpptr = NULL;
 
 /* on-disk nodes iterator */
 struct iterator
@@ -79,7 +83,7 @@ int exfat_cleanup_node(struct exfat* ef, struct exfat_node* node)
 		/* free all clusters and node structure itself */
 		rc = exfat_truncate(ef, node, 0, true);
 		/* free the node even in case of error or its memory will be lost */
-		free(node);
+		d_free(node);
 	}
 	return rc;
 }
@@ -100,7 +104,7 @@ static int opendir(struct exfat* ef, const struct exfat_node* dir,
 	it->cluster = dir->start_cluster;
 	it->offset = 0;
 	it->contiguous = IS_CONTIGUOUS(*dir);
-	it->chunk = malloc(CLUSTER_SIZE(*ef->sb));
+	it->chunk = d_malloc(CLUSTER_SIZE(*ef->sb));
 	if (it->chunk == NULL)
 	{
 		exfat_error("out of memory");
@@ -120,7 +124,7 @@ static void closedir(struct iterator* it)
 	it->cluster = 0;
 	it->offset = 0;
 	it->contiguous = 0;
-	free(it->chunk);
+	d_free(it->chunk);
 	it->chunk = NULL;
 }
 
@@ -156,7 +160,7 @@ static bool fetch_next_entry(struct exfat* ef, const struct exfat_node* parent,
 
 static struct exfat_node* allocate_node(void)
 {
-	struct exfat_node* node = malloc(sizeof(struct exfat_node));
+	struct exfat_node* node = d_malloc(sizeof(struct exfat_node));
 	if (node == NULL)
 	{
 		exfat_error("failed to allocate node");
@@ -379,7 +383,7 @@ static int readdir(struct exfat* ef, const struct exfat_node* parent,
 						le64_to_cpu(upcase->size));
 				goto error;
 			}
-			ef->upcase = malloc(le64_to_cpu(upcase->size));
+			ef->upcase = d_malloc(le64_to_cpu(upcase->size));
 			if (ef->upcase == NULL)
 			{
 				exfat_error("failed to allocate upcase table (%"PRIu64" bytes)",
@@ -421,7 +425,7 @@ static int readdir(struct exfat* ef, const struct exfat_node* parent,
 			}
 			/* FIXME bitmap can be rather big, up to 512 MB */
 			ef->cmap.chunk_size = ef->cmap.size;
-			ef->cmap.chunk = malloc(BMAP_SIZE(ef->cmap.chunk_size));
+			ef->cmap.chunk = d_malloc(BMAP_SIZE(ef->cmap.chunk_size));
 			if (ef->cmap.chunk == NULL)
 			{
 				exfat_error("failed to allocate clusters bitmap chunk "
@@ -478,7 +482,7 @@ static int readdir(struct exfat* ef, const struct exfat_node* parent,
 	/* we never reach here */
 
 error:
-	free(*node);
+	d_free(*node);
 	*node = NULL;
 	return rc;
 }
@@ -517,7 +521,7 @@ int exfat_cache_directory(struct exfat* ef, struct exfat_node* dir)
 		for (current = dir->child; current; current = node)
 		{
 			node = current->next;
-			free(current);
+			d_free(current);
 		}
 		dir->child = NULL;
 		return rc;
@@ -560,7 +564,7 @@ static void reset_cache(struct exfat* ef, struct exfat_node* node)
 		struct exfat_node* p = node->child;
 		reset_cache(ef, p);
 		tree_detach(p);
-		free(p);
+		d_free(p);
 	}
 	node->flags &= ~EXFAT_ATTRIB_CACHED;
 	if (node->references != 0)

@@ -19,7 +19,8 @@
 	with this program; if not, write to the Free Software Foundation, Inc.,
 	51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.
 */
-
+#define _GNU_SOURCE
+#include "common.h"
 #include <exfat.h>
 #include <stdio.h>
 #include <string.h>
@@ -81,7 +82,7 @@ static void dirck(struct exfat* ef, const char* path)
 	}
 
 	path_length = strlen(path);
-	entry_path = malloc(path_length + 1 + UTF8_BYTES(EXFAT_NAME_MAX) + 1);
+	entry_path = d_malloc(path_length + 1 + UTF8_BYTES(EXFAT_NAME_MAX) + 1);
 	if (entry_path == NULL)
 	{
 		exfat_put_node(ef, parent);
@@ -94,7 +95,7 @@ static void dirck(struct exfat* ef, const char* path)
 	rc = exfat_opendir(ef, parent, &it);
 	if (rc != 0)
 	{
-		free(entry_path);
+		d_free(entry_path);
 		exfat_put_node(ef, parent);
 		return;
 	}
@@ -119,7 +120,7 @@ static void dirck(struct exfat* ef, const char* path)
 	}
 	exfat_closedir(ef, &it);
 	exfat_put_node(ef, parent);
-	free(entry_path);
+	d_free(entry_path);
 }
 
 static void fsck(struct exfat* ef)

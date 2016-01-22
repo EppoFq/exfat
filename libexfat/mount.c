@@ -21,6 +21,7 @@
 */
 
 #include "exfat.h"
+#include "common.h"
 #include <string.h>
 #include <stdlib.h>
 #include <errno.h>
@@ -192,7 +193,7 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 			ef->ro = 1;
 	}
 
-	ef->sb = malloc(sizeof(struct exfat_super_block));
+	ef->sb = d_malloc(sizeof(struct exfat_super_block));
 	if (ef->sb == NULL)
 	{
 		exfat_close(ef->dev);
@@ -204,14 +205,14 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 	if (exfat_pread(ef->dev, ef->sb, sizeof(struct exfat_super_block), 0) < 0)
 	{
 		exfat_close(ef->dev);
-		free(ef->sb);
+		d_free(ef->sb);
 		exfat_error("failed to read boot sector");
 		return -EIO;
 	}
 	if (memcmp(ef->sb->oem_name, "EXFAT   ", 8) != 0)
 	{
 		exfat_close(ef->dev);
-		free(ef->sb);
+		d_free(ef->sb);
 		exfat_error("exFAT file system is not found");
 		return -EIO;
 	}
@@ -220,7 +221,7 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 	{
 		exfat_close(ef->dev);
 		exfat_error("too small sector size: 2^%hhd", ef->sb->sector_bits);
-		free(ef->sb);
+		d_free(ef->sb);
 		return -EIO;
 	}
 	/* officially exFAT supports cluster size up to 32 MB */
@@ -229,41 +230,41 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 		exfat_close(ef->dev);
 		exfat_error("too big cluster size: 2^(%hhd+%hhd)",
 				ef->sb->sector_bits, ef->sb->spc_bits);
-		free(ef->sb);
+		d_free(ef->sb);
 		return -EIO;
 	}
-	ef->zero_cluster = malloc(CLUSTER_SIZE(*ef->sb));
+	ef->zero_cluster = d_malloc(CLUSTER_SIZE(*ef->sb));
 	if (ef->zero_cluster == NULL)
 	{
 		exfat_close(ef->dev);
-		free(ef->sb);
+		d_free(ef->sb);
 		exfat_error("failed to allocate zero sector");
 		return -ENOMEM;
 	}
 	/* use zero_cluster as a temporary buffer for VBR checksum verification */
 	if (!verify_vbr_checksum(ef->dev, ef->zero_cluster, SECTOR_SIZE(*ef->sb)))
 	{
-		free(ef->zero_cluster);
+		d_free(ef->zero_cluster);
 		exfat_close(ef->dev);
-		free(ef->sb);
+		d_free(ef->sb);
 		return -EIO;
 	}
 	memset(ef->zero_cluster, 0, CLUSTER_SIZE(*ef->sb));
 	if (ef->sb->version.major != 1 || ef->sb->version.minor != 0)
 	{
-		free(ef->zero_cluster);
+		d_free(ef->zero_cluster);
 		exfat_close(ef->dev);
 		exfat_error("unsupported exFAT version: %hhu.%hhu",
 				ef->sb->version.major, ef->sb->version.minor);
-		free(ef->sb);
+		d_free(ef->sb);
 		return -EIO;
 	}
 	if (ef->sb->fat_count != 1)
 	{
-		free(ef->zero_cluster);
+		d_free(ef->zero_cluster);
 		exfat_close(ef->dev);
 		exfat_error("unsupported FAT count: %hhu", ef->sb->fat_count);
-		free(ef->sb);
+		d_free(ef->sb);
 		return -EIO;
 	}
 	if (le64_to_cpu(ef->sb->sector_count) * SECTOR_SIZE(*ef->sb) >
@@ -277,12 +278,12 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 				exfat_get_size(ef->dev));
 	}
 
-	ef->root = malloc(sizeof(struct exfat_node));
+	ef->root = d_malloc(sizeof(struct exfat_node));
 	if (ef->root == NULL)
 	{
-		free(ef->zero_cluster);
+		d_free(ef->zero_cluster);
 		exfat_close(ef->dev);
-		free(ef->sb);
+		d_free(ef->sb);
 		exfat_error("failed to allocate root node");
 		return -ENOMEM;
 	}
@@ -294,10 +295,10 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 	ef->root->size = rootdir_size(ef);
 	if (ef->root->size == 0)
 	{
-		free(ef->root);
-		free(ef->zero_cluster);
+		d_free(ef->root);
+		d_free(ef->zero_cluster);
 		exfat_close(ef->dev);
-		free(ef->sb);
+		d_free(ef->sb);
 		return -EIO;
 	}
 	/* exFAT does not have time attributes for the root directory */
@@ -328,10 +329,10 @@ int exfat_mount(struct exfat* ef, const char* spec, const char* options)
 error:
 	exfat_put_node(ef, ef->root);
 	exfat_reset_cache(ef);
-	free(ef->root);
-	free(ef->zero_cluster);
+	d_free(ef->root);
+	d_free(ef->zero_cluster);
 	exfat_close(ef->dev);
-	free(ef->sb);
+	d_free(ef->sb);
 	return -EIO;
 }
 
@@ -363,18 +364,18 @@ void exfat_unmount(struct exfat* ef)
 	exfat_flush(ef);		/* ignore return code */
 	exfat_put_node(ef, ef->root);
 	exfat_reset_cache(ef);
-	free(ef->root);
+	d_free(ef->root);
 	ef->root = NULL;
 	finalize_super_block(ef);
 	exfat_close(ef->dev);	/* close descriptor immediately after fsync */
 	ef->dev = NULL;
-	free(ef->zero_cluster);
+	d_free(ef->zero_cluster);
 	ef->zero_cluster = NULL;
-	free(ef->cmap.chunk);
+	d_free(ef->cmap.chunk);
 	ef->cmap.chunk = NULL;
-	free(ef->sb);
+	d_free(ef->sb);
 	ef->sb = NULL;
-	free(ef->upcase);
+	d_free(ef->upcase);
 	ef->upcase = NULL;
 	ef->upcase_chars = 0;
 }

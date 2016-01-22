@@ -25,6 +25,7 @@
 #include "cbm.h"
 #include "uct.h"
 #include "rootdir.h"
+#include "common.h"
 #include <string.h>
 
 static off_t vbr_alignment(void)
@@ -83,7 +84,7 @@ static int vbr_write(struct exfat_dev* dev)
 {
 	struct exfat_super_block sb;
 	uint32_t checksum;
-	le32_t* sector = malloc(get_sector_size());
+	le32_t* sector = d_malloc(get_sector_size());
 	size_t i;
 
 	if (sector == NULL)
@@ -95,7 +96,7 @@ static int vbr_write(struct exfat_dev* dev)
 	init_sb(&sb);
 	if (exfat_write(dev, &sb, sizeof(struct exfat_super_block)) < 0)
 	{
-		free(sector);
+		d_free(sector);
 		exfat_error("failed to write super block sector");
 		return 1;
 	}
@@ -108,7 +109,7 @@ static int vbr_write(struct exfat_dev* dev)
 	{
 		if (exfat_write(dev, sector, get_sector_size()) < 0)
 		{
-			free(sector);
+			d_free(sector);
 			exfat_error("failed to write a sector with boot signature");
 			return 1;
 		}
@@ -120,7 +121,7 @@ static int vbr_write(struct exfat_dev* dev)
 	{
 		if (exfat_write(dev, sector, get_sector_size()) < 0)
 		{
-			free(sector);
+			d_free(sector);
 			exfat_error("failed to write an empty sector");
 			return 1;
 		}
@@ -131,12 +132,12 @@ static int vbr_write(struct exfat_dev* dev)
 		sector[i] = cpu_to_le32(checksum);
 	if (exfat_write(dev, sector, get_sector_size()) < 0)
 	{
-		free(sector);
+		d_free(sector);
 		exfat_error("failed to write checksum sector");
 		return 1;
 	}
 
-	free(sector);
+	d_free(sector);
 	return 0;
 }
 

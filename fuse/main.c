@@ -21,6 +21,7 @@
 */
 
 #include <exfat.h>
+#include <common.h>
 #define FUSE_USE_VERSION 26
 #include <fuse.h>
 #include <errno.h>
@@ -413,7 +414,7 @@ static char* add_option(char* options, const char* name, const char* value)
 	options = realloc(options, size);
 	if (options == NULL)
 	{
-		free(optionsf);
+		d_free(optionsf);
 		exfat_error("failed to reallocate options string");
 		return NULL;
 	}
@@ -437,7 +438,7 @@ static char* add_user_option(char* options)
 	pw = getpwuid(getuid());
 	if (pw == NULL || pw->pw_name == NULL)
 	{
-		free(options);
+		d_free(options);
 		exfat_error("failed to determine username");
 		return NULL;
 	}
@@ -507,20 +508,20 @@ int main(int argc, char* argv[])
 				return 1;
 			break;
 		case 'V':
-			free(mount_options);
+			d_free(mount_options);
 			puts("Copyright (C) 2010-2015  Andrew Nayenko");
 			return 0;
 		case 'v':
 			break;
 		default:
-			free(mount_options);
+			d_free(mount_options);
 			usage(argv[0]);
 			break;
 		}
 	}
 	if (argc - optind != 2)
 	{
-		free(mount_options);
+		d_free(mount_options);
 		usage(argv[0]);
 	}
 	spec = argv[optind];
@@ -528,7 +529,7 @@ int main(int argc, char* argv[])
 
 	if (exfat_mount(&ef, spec, mount_options) != 0)
 	{
-		free(mount_options);
+		d_free(mount_options);
 		return 1;
 	}
 
@@ -555,11 +556,11 @@ int main(int argc, char* argv[])
 		fuse_opt_add_arg(&mount_args, mount_options) != 0)
 	{
 		exfat_unmount(&ef);
-		free(mount_options);
+		d_free(mount_options);
 		return 1;
 	}
 
-	free(mount_options);
+	d_free(mount_options);
 
 	/* create FUSE mount point */
 	fc = fuse_mount(mount_point, &mount_args);

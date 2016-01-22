@@ -21,6 +21,7 @@
 */
 
 #include "mkexfat.h"
+#include "common.h"
 #include <sys/types.h>
 #include <unistd.h>
 #include <inttypes.h>
@@ -79,7 +80,7 @@ static int erase(struct exfat_dev* dev)
 	const struct fs_object** pp;
 	off_t position = 0;
 	const size_t block_size = 1024 * 1024;
-	void* block = malloc(block_size);
+	void* block = d_malloc(block_size);
 
 	if (block == NULL)
 	{
@@ -94,13 +95,13 @@ static int erase(struct exfat_dev* dev)
 		if (erase_object(dev, block, block_size, position,
 				(*pp)->get_size()) != 0)
 		{
-			free(block);
+			d_free(block);
 			return 1;
 		}
 		position += (*pp)->get_size();
 	}
 
-	free(block);
+	d_free(block);
 	return 0;
 }
 

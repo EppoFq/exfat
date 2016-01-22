@@ -22,6 +22,7 @@
 
 #define _GNU_SOURCE
 #include "exfat.h"
+#include "common.h"
 #include <inttypes.h>
 #include <sys/types.h>
 #include <sys/stat.h>
@@ -87,7 +88,7 @@ struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode)
 	struct ublio_param up;
 #endif
 
-	dev = malloc(sizeof(struct exfat_dev));
+	dev = d_malloc(sizeof(struct exfat_dev));
 	if (dev == NULL)
 	{
 		exfat_error("failed to allocate memory for device structure");
@@ -100,7 +101,7 @@ struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode)
 		dev->fd = open_ro(spec);
 		if (dev->fd == -1)
 		{
-			free(dev);
+			d_free(dev);
 			exfat_error("failed to open '%s' in read-only mode: %s", spec,
 					strerror(errno));
 			return NULL;
@@ -111,7 +112,7 @@ struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode)
 		dev->fd = open_rw(spec);
 		if (dev->fd == -1)
 		{
-			free(dev);
+			d_free(dev);
 			exfat_error("failed to open '%s' in read-write mode: %s", spec,
 					strerror(errno));
 			return NULL;
@@ -132,7 +133,7 @@ struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode)
 			exfat_warn("'%s' is write-protected, mounting read-only", spec);
 			break;
 		}
-		free(dev);
+		d_free(dev);
 		exfat_error("failed to open '%s': %s", spec, strerror(errno));
 		return NULL;
 	}
@@ -140,7 +141,7 @@ struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode)
 	if (fstat(dev->fd, &stbuf) != 0)
 	{
 		close(dev->fd);
-		free(dev);
+		d_free(dev);
 		exfat_error("failed to fstat '%s'", spec);
 		return NULL;
 	}
@@ -149,7 +150,7 @@ struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode)
 		!S_ISREG(stbuf.st_mode))
 	{
 		close(dev->fd);
-		free(dev);
+		d_free(dev);
 		exfat_error("'%s' is neither a device, nor a regular file", spec);
 		return NULL;
 	}
@@ -163,14 +164,14 @@ struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode)
 		if (ioctl(dev->fd, DKIOCGETBLOCKSIZE, &block_size) != 0)
 		{
 			close(dev->fd);
-			free(dev);
+			d_free(dev);
 			exfat_error("failed to get block size");
 			return NULL;
 		}
 		if (ioctl(dev->fd, DKIOCGETBLOCKCOUNT, &blocks) != 0)
 		{
 			close(dev->fd);
-			free(dev);
+			d_free(dev);
 			exfat_error("failed to get blocks count");
 			return NULL;
 		}
@@ -187,7 +188,7 @@ struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode)
 		if (ioctl(dev->fd, DIOCGDINFO, &lab) == -1)
 		{
 			close(dev->fd);
-			free(dev);
+			d_free(dev);
 			exfat_error("failed to get disklabel");
 			return NULL;
 		}
@@ -210,14 +211,14 @@ struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode)
 		if (dev->size <= 0)
 		{
 			close(dev->fd);
-			free(dev);
+			d_free(dev);
 			exfat_error("failed to get size of '%s'", spec);
 			return NULL;
 		}
 		if (exfat_seek(dev, 0, SEEK_SET) == -1)
 		{
 			close(dev->fd);
-			free(dev);
+			d_free(dev);
 			exfat_error("failed to seek to the beginning of '%s'", spec);
 			return NULL;
 		}
@@ -235,7 +236,7 @@ struct exfat_dev* exfat_open(const char* spec, enum exfat_mode mode)
 	if (dev->ufh == NULL)
 	{
 		close(dev->fd);
-		free(dev);
+		d_free(dev);
 		exfat_error("failed to initialize ublio");
 		return NULL;
 	}
@@ -260,7 +261,7 @@ int exfat_close(struct exfat_dev* dev)
 		exfat_error("failed to close device: %s", strerror(errno));
 		rc = -EIO;
 	}
-	free(dev);
+	d_free(dev);
 	return rc;
 }
 
