@@ -235,6 +235,7 @@ static bool check_node(const struct exfat_node* node, uint16_t actual_checksum,
  * Reads one entry in directory at position pointed by iterator and fills
  * node structure.
  */
+ #if 0
 static int readdir(struct exfat* ef, const struct exfat_node* parent,
 		struct exfat_node** node, struct iterator* it)
 {
@@ -486,6 +487,274 @@ error:
 	*node = NULL;
 	return rc;
 }
+#else
+static int readdir(struct exfat* ef, const struct exfat_node* parent,
+		struct exfat_node** node, struct iterator* it)
+{
+	int rc = -EIO;
+	const struct exfat_entry* entry;
+	const struct exfat_entry_meta1* meta1;
+	const struct exfat_entry_meta2* meta2;
+	const struct exfat_entry_name* file_name;
+	const struct exfat_entry_upcase* upcase;
+	const struct exfat_entry_bitmap* bitmap;
+	const struct exfat_entry_label* label;
+	uint8_t continuations = 0;
+	le16_t* namep = NULL;
+	uint16_t reference_checksum = 0;
+	uint16_t actual_checksum = 0;
+	uint64_t valid_size = 0;
+
+	unsigned int i;
+	unsigned int err_flag = 0;
+
+	*node = NULL;
+
+	for (;;)
+	{
+		if (it->offset >= parent->size)
+		{
+			if (continuations != 0)
+			{
+				exfat_error("expected %hhu continuations", continuations);
+				goto error;
+			}
+			return -ENOENT; /* that's OK, means end of directory */
+		}
+
+		entry = get_entry_ptr(ef, it);
+		switch (entry->type)
+		{
+		case EXFAT_ENTRY_FILE:
+			if (continuations != 0)
+			{
+				exfat_error("expected %hhu continuations before new entry",
+						continuations);
+				goto error;
+			}
+			meta1 = (const struct exfat_entry_meta1*) entry;
+			continuations = meta1->continuations;
+			/* each file entry must have at least 2 continuations:
+			   info and name */
+			if (continuations < 2)
+			{
+				exfat_error("too few continuations (%hhu)", continuations);
+				goto error;
+			}
+			if (continuations > 1 +
+					DIV_ROUND_UP(EXFAT_NAME_MAX, EXFAT_ENAME_MAX))
+			{
+				exfat_error("too many continuations (%hhu)", continuations);
+				goto error;
+			}
+			reference_checksum = le16_to_cpu(meta1->checksum);
+			actual_checksum = exfat_start_checksum(meta1);
+			*node = allocate_node();
+			if (*node == NULL)
+			{
+				rc = -ENOMEM;
+				goto error;
+			}
+			/* new node has zero reference counter */
+			(*node)->entry_cluster = it->cluster;
+			(*node)->entry_offset = it->offset;
+			init_node_meta1(*node, meta1);
+			namep = (*node)->name;
+			break;
+
+		case EXFAT_ENTRY_FILE_INFO:
+			if (continuations < 2)
+			{
+				exfat_error("unexpected continuation (%hhu)",
+						continuations);
+				goto error;
+			}
+			meta2 = (const struct exfat_entry_meta2*) entry;
+			if (meta2->flags & ~(EXFAT_FLAG_ALWAYS1 | EXFAT_FLAG_CONTIGUOUS))
+			{
+				exfat_error("unknown flags in meta2 (0x%hhx)", meta2->flags);
+				goto error;
+			}
+			init_node_meta2(*node, meta2);
+			actual_checksum = exfat_add_checksum(entry, actual_checksum);
+			valid_size = le64_to_cpu(meta2->valid_size);
+			/* empty files must be marked as non-contiguous */
+//			if ((*node)->size == 0 && (meta2->flags & EXFAT_FLAG_CONTIGUOUS))
+//			{
+//				exfat_error("empty file marked as contiguous (0x%hhx)",
+//						meta2->flags);
+//				err_flag = 1;
+//				//continue;
+//				goto error;
+//			}
+			/* directories must be aligned on at cluster boundary */
+			if (((*node)->flags & EXFAT_ATTRIB_DIR) &&
+				(*node)->size % CLUSTER_SIZE(*ef->sb) != 0)
+			{
+				exfat_error("directory has invalid size %"PRIu64" bytes",
+						(*node)->size);
+				goto error;
+			}
+			--continuations;
+			break;
+
+		case EXFAT_ENTRY_FILE_NAME:
+			if (continuations == 0)
+			{
+				exfat_error("unexpected continuation");
+				goto error;
+			}
+			file_name = (const struct exfat_entry_name*) entry;
+			actual_checksum = exfat_add_checksum(entry, actual_checksum);
+
+			memcpy(namep, file_name->name,
+					MIN(EXFAT_ENAME_MAX,
+						((*node)->name + EXFAT_NAME_MAX - namep)) *
+					sizeof(le16_t));
+			namep += EXFAT_ENAME_MAX;
+			if (--continuations == 0)
+			{
+				if (!check_node(*node, actual_checksum, reference_checksum,
+						valid_size))
+					goto error;
+				if (!fetch_next_entry(ef, parent, it))
+					goto error;
+				return 0; /* entry completed */
+			}
+			break;
+
+		case EXFAT_ENTRY_UPCASE:
+			if (ef->upcase != NULL)
+				break;
+			upcase = (const struct exfat_entry_upcase*) entry;
+			if (CLUSTER_INVALID(le32_to_cpu(upcase->start_cluster)))
+			{
+				exfat_error("invalid cluster 0x%x in upcase table",
+						le32_to_cpu(upcase->start_cluster));
+				goto error;
+			}
+			if (le64_to_cpu(upcase->size) == 0 ||
+				le64_to_cpu(upcase->size) > 0xffff * sizeof(uint16_t) ||
+				le64_to_cpu(upcase->size) % sizeof(uint16_t) != 0)
+			{
+				exfat_error("bad upcase table size (%"PRIu64" bytes)",
+						le64_to_cpu(upcase->size));
+				goto error;
+			}
+			ef->upcase = d_malloc(le64_to_cpu(upcase->size));
+			if (ef->upcase == NULL)
+			{
+				exfat_error("failed to allocate upcase table (%"PRIu64" bytes)",
+						le64_to_cpu(upcase->size));
+				rc = -ENOMEM;
+				goto error;
+			}
+			ef->upcase_chars = le64_to_cpu(upcase->size) / sizeof(le16_t);
+
+			if (exfat_pread(ef->dev, ef->upcase, le64_to_cpu(upcase->size),
+					exfat_c2o(ef, le32_to_cpu(upcase->start_cluster))) < 0)
+			{
+				exfat_error("failed to read upper case table "
+						"(%"PRIu64" bytes starting at cluster %#x)",
+						le64_to_cpu(upcase->size),
+						le32_to_cpu(upcase->start_cluster));
+				goto error;
+			}
+			break;
+
+		case EXFAT_ENTRY_BITMAP:
+			bitmap = (const struct exfat_entry_bitmap*) entry;
+			ef->cmap.start_cluster = le32_to_cpu(bitmap->start_cluster);
+			if (CLUSTER_INVALID(ef->cmap.start_cluster))
+			{
+				exfat_error("invalid cluster 0x%x in clusters bitmap",
+						ef->cmap.start_cluster);
+				goto error;
+			}
+			ef->cmap.size = le32_to_cpu(ef->sb->cluster_count) -
+				EXFAT_FIRST_DATA_CLUSTER;
+			if (le64_to_cpu(bitmap->size) < DIV_ROUND_UP(ef->cmap.size, 8))
+			{
+				exfat_error("invalid clusters bitmap size: %"PRIu64
+						" (expected at least %u)",
+						le64_to_cpu(bitmap->size),
+						DIV_ROUND_UP(ef->cmap.size, 8));
+				goto error;
+			}
+			/* FIXME bitmap can be rather big, up to 512 MB */
+			ef->cmap.chunk_size = ef->cmap.size;
+			ef->cmap.chunk = d_malloc(BMAP_SIZE(ef->cmap.chunk_size));
+			if (ef->cmap.chunk == NULL)
+			{
+				exfat_error("failed to allocate clusters bitmap chunk "
+						"(%"PRIu64" bytes)", le64_to_cpu(bitmap->size));
+				rc = -ENOMEM;
+				goto error;
+			}
+
+			if (exfat_pread(ef->dev, ef->cmap.chunk,
+					BMAP_SIZE(ef->cmap.chunk_size),
+					exfat_c2o(ef, ef->cmap.start_cluster)) < 0)
+			{
+				exfat_error("failed to read clusters bitmap "
+						"(%"PRIu64" bytes starting at cluster %#x)",
+						le64_to_cpu(bitmap->size), ef->cmap.start_cluster);
+				goto error;
+			}
+			break;
+
+		case EXFAT_ENTRY_LABEL:
+			label = (const struct exfat_entry_label*) entry;
+			if (label->length > EXFAT_ENAME_MAX)
+			{
+				exfat_error("too long label (%hhu chars)", label->length);
+				goto error;
+			}
+			if (utf16_to_utf8(ef->label, label->name,
+						sizeof(ef->label) - 1, EXFAT_ENAME_MAX) != 0)
+				goto error;
+			break;
+
+		default:
+			if (!(entry->type & EXFAT_ENTRY_VALID))
+				break; /* deleted entry, ignore it */
+			if (!(entry->type & EXFAT_ENTRY_OPTIONAL))
+			{
+				exfat_error("unknown entry type %#hhx", entry->type);
+				goto error;
+			}
+			/* optional entry, warn and skip */
+			exfat_warn("unknown entry type %#hhx", entry->type);
+			if (continuations == 0)
+			{
+				exfat_error("unexpected continuation");
+				goto error;
+			}
+			--continuations;
+			break;
+		}
+
+		if (!fetch_next_entry(ef, parent, it))
+			goto error;
+	}
+	/* we never reach here */
+
+error:
+	printf("(*node)->name: %s\n", (*node)->name);
+	for(i=0; i<256; i+=2)
+	{
+		printf("node->name[%d] : %c \n", i/2,  (short *)((*node)->name+i));
+	}
+	printf("(*entry->data): \n%s\n", (char *)(entry->data));
+	for(i=0; i<32; i++)
+	{
+		printf("entry[%d] : 0x%x, %c \n", i,  (unsigned char)(entry+i), (char *)(entry+i));
+	}
+	d_free(*node);
+	*node = NULL;
+	return rc;
+}
+ #endif
 
 int exfat_cache_directory(struct exfat* ef, struct exfat_node* dir)
 {
