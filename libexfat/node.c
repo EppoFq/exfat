@@ -506,7 +506,12 @@ static int readdir(struct exfat* ef, const struct exfat_node* parent,
 	uint64_t valid_size = 0;
 
 	unsigned int i;
+	le16_t* nameptmp = NULL;
 	unsigned int err_flag = 0;
+	unsigned long long off = 0;
+	unsigned int sector_bytes = 0;
+	unsigned int cluster_bytes = 0;
+	const struct exfat_entry_meta2* readmeta2;
 
 	*node = NULL;
 
@@ -579,14 +584,53 @@ static int readdir(struct exfat* ef, const struct exfat_node* parent,
 			actual_checksum = exfat_add_checksum(entry, actual_checksum);
 			valid_size = le64_to_cpu(meta2->valid_size);
 			/* empty files must be marked as non-contiguous */
-//			if ((*node)->size == 0 && (meta2->flags & EXFAT_FLAG_CONTIGUOUS))
-//			{
-//				exfat_error("empty file marked as contiguous (0x%hhx)",
-//						meta2->flags);
-//				err_flag = 1;
-//				//continue;
+			if ((*node)->size == 0 && (meta2->flags & EXFAT_FLAG_CONTIGUOUS))
+			{
+				exfat_error("empty file marked as contiguous (0x%hhx)",
+						meta2->flags);
+//				meta2->flags = 0x01;
+				printf("\nmeta2:\n");
+				for(i=0; i<32; i++)
+				{
+					printf("meata[%d] : 0x%x \n",  i,(char *)(meta2+i));
+				}
+				printf("it->cluster : %d\n", it->cluster);
+				printf("it->offset  : %d\n", it->offset);
+				sector_bytes = (1<<ef->sb->sector_bits);
+				cluster_bytes = (1<<ef->sb->spc_bits) * sector_bytes;
+				printf("sector bytes: %d Bytes\n", sector_bytes);
+				printf("cluster bytes: %d Bytes\n", cluster_bytes);
+//				off = (unsigned long long)((unsigned int)(ef->sb->cluster_sector_start) * sector_bytes) + ((uint64_t)(it->cluster - 2)*cluster_bytes) +\
+//					 (it->offset);
+				readmeta2 = d_malloc(sizeof(struct exfat_entry_meta2));
+				if (readmeta2 == NULL)
+				{
+					exfat_error("failed to allocate memory for readmeta2");
+					return -ENOMEM;
+				}
+				memset(ef->sb, 0, sizeof(struct exfat_super_block));
+				if (exfat_pread(ef->dev, readmeta2, sizeof(struct exfat_entry_meta2), 0) < 0)
+				{
+					d_free(readmeta2);
+					exfat_error("failed to read meta2");
+					return -EIO;
+				}
+				printf("\nreadmeta2:\n");
+				for(i=0; i<32; i++)
+				{
+					printf("readmeata[%d] : 0x%x \n",  i,readmeta2[i]);
+				}
+				
+				err_flag = 1;
+				printf("file_name->name:\n%s\n", (char *)(namep-EXFAT_ENAME_MAX));
+				nameptmp = namep - EXFAT_ENAME_MAX;
+				for(i=0; i<EXFAT_ENAME_MAX*2; i+=2)
+				{
+					printf("namep[%d] : %c \n", i/2,  (short *)(nameptmp+i));
+				}
+//				continue;
 //				goto error;
-//			}
+			}
 			/* directories must be aligned on at cluster boundary */
 			if (((*node)->flags & EXFAT_ATTRIB_DIR) &&
 				(*node)->size % CLUSTER_SIZE(*ef->sb) != 0)
@@ -611,6 +655,15 @@ static int readdir(struct exfat* ef, const struct exfat_node* parent,
 					MIN(EXFAT_ENAME_MAX,
 						((*node)->name + EXFAT_NAME_MAX - namep)) *
 					sizeof(le16_t));
+			if (1 == err_flag)
+			{
+				err_flag = 0;
+				printf("\nfilename:\n");
+				for(i=0; i<EXFAT_ENAME_MAX*2; i+=2)
+				{
+					printf("name[%d] : %c \n", i/2,  (short *)(namep+i));
+				}
+			}
 			namep += EXFAT_ENAME_MAX;
 			if (--continuations == 0)
 			{
